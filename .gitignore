@@ -1,0 +1,26 @@
+# Ignore data
+data/*
+*.tar
+*.gz
+*.zip
+*.fastq
+*.txt
+*.tsv
+
+
+# Ignore RStudio junk
+.Rhistory
+.RData
+.Rproj.user/
+
+# Ignore other miscellaneous files
+.DS_Store
+
+# Ignore large results
+*.Rds
+*.rds
+*.mtx
+
+# Ignore Words docs and other files
+*.docx
+background/
