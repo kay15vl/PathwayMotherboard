@@ -1,30 +1,264 @@
 ---
-title: UntitlIdentifying Overlapping Gene Expression and Biological Processes Between
+title: Identifying Overlapping Gene Expression and Biological Processes Between
   Gestational Diabetes Mellitus and Postpartum Hemorrhageed
 output: html_document
 date: "2025-11-28"
+geometry: margin=1in
 ---
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+# upload libraries
+library(tidyverse)
+library(data.table)
+library(GEOquery)
+library(RUVSeq) # may use depending on variation
+library(DESeq2)
+library(EnsDb.Hsapiens.v86) # used to convert transcript ids to gene ids
+library(tximport)
+library(EnhancedVolcano)
+library(RColorBrewer)
 ```
 
-## Including Plots
+# Step 1: Get Counts
+## Get raw data and process
+```{r}
+# on imac
+get_raw_data <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW"
+get_files <- list.files(get_raw_data, pattern = "\\.tsv\\.gz$", full.names = TRUE)
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+#check
+length(get_files)
+head(get_files)
+```
+
+```{r}
+# get sample ids
+sample_ids <- basename(get_files) |> str_extract("GSM\\d+")
+length(sample_ids)
+head(sample_ids)
+
+```
+
+
+```{r}
+# label files with their sample id
+names(get_files) <- sample_ids
+head(get_files)
+```
+
+
+```{r}
+# create transcript ids to gene ids mapping
+transcript_maps <- transcripts(EnsDb.Hsapiens.v86,
+                            columns = c("tx_id", "tx_version", "gene_id", "gene_name")) %>% 
+  as.data.frame()
+head(transcript_maps)
+```
+
+
+```{r}
+map_to_genes <- transcript_maps %>% 
+  dplyr::select(tx_id,gene_id)
+head(map_to_genes)
+```
+
+```{r}
+# take a look at one of the tsv.gz files
+check_file <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW/GSM6167352_17A020341F_S30_L004.tsv.gz"
+check<- read_tsv(gzfile(check_file), n_max =20)
+head(check)
+```
+
+
+```{r}
+# get raw counts matrix
+first_entry <- fread(get_files[1])
+
+# save transcript IDs
+transcript_ids <-first_entry$target_id
+
+# initialize empty matrix
+counts_matrix <- matrix(
+  NA_real_,
+  nrow= length(transcript_ids), # one row for each transcript
+  ncol = length(get_files) # one column per sample
+)
+
+# set rownames and column names
+rownames(counts_matrix) <- transcript_ids
+colnames(counts_matrix) <- sample_ids
+
+# fill the matrix with each transcript's respective count from the est_counts column
+for(i in seq_along(get_files)){
+  # read file
+  dt <- fread(get_files[i])
+  
+  # make sure the order of each data file matches the first read data file
+  idx <- match(transcript_ids, dt$target_id)
+  
+  # get the counts form est_counts column in the correct order
+  counts_idx <- dt$est_counts[idx]
+  
+  # store in the correct location
+  counts_matrix[,i] <- counts_idx
+}
+
+# since my transcript to gene mapping does not have decimals, need to get rid of 
+# the integer after the (.) in the transcript id
+tx_ids <- sub("\\..*$", "", rownames(counts_matrix))  # transcript ids from the counts matrix
+
+# make a vector with the transcript and gene mappings
+tx_to_gene <- setNames(map_to_genes$gene_id, map_to_genes$tx_id)
+
+# map gene ids to our counts matrix
+gene_ids <- tx_to_gene[tx_ids]
+
+# check to see how many transcript ids do not have a corresponding gene id from 
+# the mapping df
+sum(is.na(gene_ids))
+```
+
+```{r}
+# keep track of which transcripts did not map
+keep_transcripts <- !is.na(gene_ids)
+
+# filter out unmapped transcripts from counts matrix
+keep_counts <- counts_matrix[keep_transcripts,]
+
+# save the genes that were kept
+kept_genes <- gene_ids[keep_transcripts]
+
+# collapse the transcript counts to gene level counts. Will sum coutns based
+# on the genes that had mappings
+gene_counts <- rowsum(
+  x = keep_counts,
+  group = kept_genes
+)
+
+# check dimensions of new counts matrix and look at data
+dim(gene_counts)
+head(gene_counts,5)
+
+# for easier data handling, rounding up to whole numbers
+gene_counts <- round(gene_counts)
+
+# save this counts table 
+saveRDS(gene_counts, file = "../data/processed_counts.rds")
+```
+
+#### Lodad processed counts matrix
+```{r}
+loaded_gene_counts <- readRDS("../data/processed_counts.rds")
+```
+
+
+# Step 2: Build Metadata
+```{r}
+# get series matrix 
+gse_list <- getGEO("GSE203346", GSEMatrix = TRUE)
+
+# get the expression set object
+first_gse <- gse_list[[1]]
+
+# get metadata/phenotype
+pheno <- pData(first_gse)
+
+# check data
+colnames(pheno)
+head(pheno,1)
+```
+
+```{r}
+# ensure we are finding the correct tissue type and group labels
+unique(pheno$characteristics_ch1) # should have GDM and control labels
+unique(pheno$source_name_ch1) # should say placenta and umbilical cord
+```
+
+```{r}
+clean_metadata <- pheno %>% 
+  # create column that has appropriate and matching conditions for each acession number
+  mutate(
+    sample_id = geo_accession,
+    condition = case_when(
+      str_detect(characteristics_ch1, "GDM") ~ "GDM",
+      str_detect(characteristics_ch1, "Control") ~ "Control",
+      TRUE ~ NA_character_
+    ),
+    
+    # create column that has appropriate and matching sample tissue type for each acession number
+    tissue = case_when(
+      str_detect(source_name_ch1, regex("umbilical", ignore_case = TRUE)) ~ "Cord",
+      str_detect(source_name_ch1, regex("placenta", ignore_case = TRUE)) ~ "Placenta",
+      TRUE ~ NA_character_  # anything else becomes NA
+    )) %>% 
+  
+    # keep important columns
+  dplyr::select(sample_id, tissue, condition, everything())
+
+  
+```
+
+
+```{r}
+# line up the metadata with the counts matrix
+gene_counts <- loaded_gene_counts
+
+# make sure the column names are the GSM ids
+colnames(gene_counts) <- str_extract(colnames(gene_counts), "GSM\\d+")
+
+# find overlap between samples (GSM ids) in the counts matrix and metadata. 
+# want to keep that are only seen in both metadata and counts matrix.
+same_samples <- intersect(colnames(gene_counts), clean_metadata$sample_id)
+
+# subset the counts matrix to the samples found to be shared between metadata and counts matrix
+same_genecounts <- gene_counts[, same_samples]
+
+# then subset metadata by the samples
+same_metadata <- clean_metadata %>% 
+  dplyr::filter(sample_id %in% same_samples)
+
+# reorder metadata rows so they match the column order of the counts matrix
+same_metadata <- same_metadata[match(same_samples, same_metadata$sample_id),]
+
+# check output; metadata and counts matrix should have the same GSM ids/samples
+# and in the same order
+all(colnames(same_genecounts)== same_metadata$sample_id)
+
+# redefine the counts matrix and metadata with the new ordered data
+gene_counts <- same_genecounts
+clean_metadata <- same_metadata
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
