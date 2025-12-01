@@ -22,7 +22,6 @@ library(GEOquery)
 library(RUVSeq) # may use depending on variation
 library(DESeq2)
 library(EnsDb.Hsapiens.v86) # used to convert transcript ids to gene ids
-library(tximport)
 library(EnhancedVolcano)
 library(RColorBrewer)
 ```
