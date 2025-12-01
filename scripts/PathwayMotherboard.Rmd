@@ -239,7 +239,53 @@ gene_counts <- same_genecounts
 clean_metadata <- same_metadata
 ```
 
+# Step 3: DESeq2 Setup
+```{r}
+# since I want to look at tissue specific DE, I need to separate them
+# placenta samples
+placenta_samples <- clean_metadata$sample_id[clean_metadata$tissue == "Placenta"]
 
+# cord samples
+cord_samples <- clean_metadata$sample_id[clean_metadata$tissue == "Cord"]
+
+# get the counts for each tissue type 
+placenta_counts <- gene_counts[, placenta_samples]
+cord_counts <- gene_counts[, cord_samples]
+
+# get the metadata
+placenta_metadata<- clean_metadata[clean_metadata$sample_id %in% placenta_samples,]
+cord_metadata <- clean_metadata[clean_metadata$sample_id %in% cord_samples,]
+
+# check to make sure we have the correct subsets
+all(colnames(placenta_counts) == placenta_metadata$sample_id)
+all(colnames(cord_counts) == cord_metadata$sample_id)
+```
+
+
+```{r}
+# create the DESeq objects for DESeq
+dds_placenta <- DESeqDataSetFromMatrix(
+  countData = placenta_counts,
+  colData = placenta_metadata,
+  design = ~ condition
+)
+
+dds_cord <- DESeqDataSetFromMatrix(
+  countData = cord_counts,
+  colData = cord_metadata,
+  design = ~ condition
+)
+
+# filter out low expressed genes
+# keep genes with 10 or more genes in 3 or more samples
+keep_placenta <- rowSums(counts(dds_placenta) >= 10) >=3
+keep_cord <- rowSums(counts(dds_cord) >= 10) >=3
+
+# filter out the low genes
+dds_placenta <- dds_placenta[keep_placenta, ]
+dds_cord <- dds_cord[keep_cord, ]
+
+```
 
 
 
