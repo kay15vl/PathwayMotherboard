@@ -21,6 +21,7 @@ library(data.table)
 library(GEOquery)
 library(RUVSeq) # may use depending on variation
 library(DESeq2)
+library(EnhancedVolcano)
 library(EnsDb.Hsapiens.v86) # used to convert transcript ids to gene ids
 library(EnhancedVolcano)
 library(RColorBrewer)
@@ -163,10 +164,14 @@ loaded_gene_counts <- readRDS("../data/processed_counts.rds")
 
 
 # Step 2: Build Metadata
+
 ```{r}
 # get series matrix 
 gse_list <- getGEO("GSE203346", GSEMatrix = TRUE)
 
+```
+
+```{r}
 # get the expression set object
 first_gse <- gse_list[[1]]
 
@@ -261,7 +266,7 @@ all(colnames(placenta_counts) == placenta_metadata$sample_id)
 all(colnames(cord_counts) == cord_metadata$sample_id)
 ```
 
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
 ```{r}
 # create the DESeq objects for DESeq
 dds_placenta <- DESeqDataSetFromMatrix(
@@ -285,16 +290,72 @@ keep_cord <- rowSums(counts(dds_cord) >= 10) >=3
 dds_placenta <- dds_placenta[keep_placenta, ]
 dds_cord <- dds_cord[keep_cord, ]
 
+# Run DESeq2
+dds_placenta <- DESeq(dds_placenta)
+dds_cord <- DESeq(dds_cord)
+
 ```
 
 
+```{r}
+# separate results by condition for each tissue
+results_placenta <- results(dds_placenta, contrast = c("condition", "GDM", "Control"))
+results_cord <- results(dds_cord, contrast = c("condition", "GDM", "Control"))
+
+# order by adjusted p-value
+results_placenta <- results_placenta[order(results_placenta$padj), ]
+results_cord <- results_cord[order(results_cord$padj), ]
+
+head(results_placenta)
+head(results_cord)
+```
+
+# Step 4: Differential Expression Results
+```{r}
+head(results_placenta, 20)
+head(results_cord, 20)
+```
 
 
+```{r}
+# count significant genes with p threshold of <0.05
+sum(results_placenta$padj < 0.05, na.rm = TRUE)
+sum(results_cord$padj < 0.05, na.rm = TRUE)
 
 
+```
+
+```{r}
+# MA Plots
+plotMA(results_placenta, ylim=c(-6,6), main ="Placenta: GDM vs Control")
+plotMA(results_cord, ylim=c(-6,6), main= "Umbilical Cord: GDM vs Control")
+```
 
 
+```{r}
+EnhancedVolcano(
+  as.data.frame(results_placenta),
+  lab = rownames(results_placenta),
+  x = "log2FoldChange",
+  y = "pvalue",
+  title = "Placenta: GDM vs Control",
+  axisLabSize = 10,
+  pCutoff = 0.05,
+  FCcutoff = 1,
+  pointSize = 1,
+  labSize = 2.0,
+  col = c("grey30", "forestgreen", "royalblue", "red2"),
+  legendPosition = "right",
+  legendLabSize = 10,
+  legendIconSize = 3,
+  caption = NULL
+)
+```
 
+```{r}
+# PCA plots
+plotPCA(vst(dds_placenta), intgroup = "condition")
+```
 
 
 
