@@ -15,6 +15,7 @@ data/*
 
 # Ignore other miscellaneous files
 .DS_Store
+.tmp.driveupload/
 
 # Ignore large results
 *.Rds

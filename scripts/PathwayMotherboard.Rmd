@@ -18,13 +18,17 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 # upload libraries
 library(tidyverse)
 library(data.table)
+library(biomaRt)
 library(GEOquery)
 library(RUVSeq) # may use depending on variation
 library(DESeq2)
+library(EDASeq)
 library(EnhancedVolcano)
 library(EnsDb.Hsapiens.v86) # used to convert transcript ids to gene ids
 library(EnhancedVolcano)
+library(clusterProfiler)
 library(RColorBrewer)
+library(org.Hs.eg.db)
 ```
 
 # Step 1: Get Counts
@@ -244,7 +248,135 @@ gene_counts <- same_genecounts
 clean_metadata <- same_metadata
 ```
 
-# Step 3: DESeq2 Setup
+# Step 3: QC
+```{r}
+# get gene level metadata from ENsDB
+ensg_data <- genes(EnsDb.Hsapiens.v86, 
+                   columns = c("gene_id", "gene_name", "gc_content", "gene_length")) %>% 
+  as.data.frame()
+
+# only get the gc content and gene length for our counts data
+keep_ensg <- ensg_data %>% dplyr::filter(gene_id %in% rownames(gene_counts))
+
+# match row order of keep_ensg to  counts matrix
+keep_ensg <- keep_ensg[match(rownames(gene_counts), keep_ensg$gene_id), ]
+
+# create the seqexpression object
+eda_obj <- newSeqExpressionSet(
+  counts = as.matrix(gene_counts),
+  featureData = AnnotatedDataFrame(keep_ensg),
+  phenoData = AnnotatedDataFrame(clean_metadata)
+  
+)
+
+# order samples by condition
+order_cond <- order(pData(eda_obj)$condition)
+reorder_edaobj <- eda_obj[, order_cond]
+
+# set up labels for conditions for each sample
+cond <- pData(reorder_edaobj)$condition
+
+# set colors
+cond_colors <- ifelse(cond == "GDM", "gold", "steelblue")
+
+
+reorder_edaobj
+```
+
+```{r}
+# set margins
+
+par(mar= c(12,5,4,15), xpd = TRUE)
+
+EDASeq::boxplot(log10(counts(reorder_edaobj)+1), 
+                col = cond_colors,
+                las = 2,
+                cex.axis = 0.9,
+                cex.names = 0.9,
+                main = "Raw gene counts by sample (log)",
+                ylab = "log10 (count +1)",
+                xlab = "")
+mtext("Samples", side = 1, line = 7, cex = 0.9)
+legend("topright", 
+       inset = c(-0.3, 0.1),
+       legend = c("Control", "GDM"),
+       fill = c("steelblue", "gold"),
+       bty = "n")
+```
+
+
+```{r}
+#plot by tissue
+tissue <- pData(reorder_edaobj)$tissue
+cond <- pData(reorder_edaobj)$condition
+
+# get index for placenta samples
+idx_placenta <- tissue == "Placenta"
+cond_placenta <- cond[idx_placenta]
+cond_color_placenta <- ifelse(cond_placenta=="GDM", "gold", "steelblue")
+
+par(mar= c(12,5,4,15), xpd = TRUE)
+
+EDASeq::boxplot(log10(counts(reorder_edaobj[, idx_placenta]) + 1), 
+                isLog= TRUE,
+                col = cond_color_placenta,
+                las = 2,
+                cex.axis = 0.9,
+                cex.names = 0.9,
+                main = "Raw gene counts for Placental Samples (log)",
+                ylab = "log10 (count +1)",
+                xlab = "")
+
+idx_cord <- tissue == "Cord"
+cond_cord <- cond[idx_cord]
+cond_color_cord <- ifelse(cond_cord=="GDM", "gold", "steelblue")
+
+par(mar= c(12,5,4,15), xpd = TRUE)
+EDASeq::boxplot(log10(counts(reorder_edaobj[, idx_cord]) + 1), 
+                isLog= TRUE,
+                col = cond_color_cord,
+                las = 2,
+                cex.axis = 0.9,
+                cex.names = 0.9,
+                main = "Raw gene counts for Umbilical Cord Samples (log)",
+                ylab = "log10 (count +1)",
+                xlab = "")
+
+```
+
+
+```{r}
+# plot Mean Variance plot
+meanVarPlot(eda_obj, log=TRUE)
+```
+
+```{r}
+# check to see if we have gc content and length in eda object
+colnames(featureData(eda_obj))
+```
+
+### Didn't have these columns so need to add them to the object to do bias plots to see if gc and length are responsible for the technical variance seen in the raw gene counts and mean variance plot
+```{r}
+# get the gene ids in the eda object
+ids <- fData(eda_obj)$gene_id
+
+# get length and gc content from hsa
+#length_gc <- getGeneLengthAndGCContent(ids, org = "hsa", mode = "biomart")
+
+# getGeneLengthAndGCContent takes forever to run so save the length_gc as a rds
+#saveRDS(length_gc, file = "../data/length_gc_human_data.rds")
+length_gc <- readRDS("../data/length_gc_human_data.rds")
+
+#add to object
+fData(eda_obj)$length <- length_gc[, "length"]
+fData(eda_obj)$gc <- length_gc[, "gc"]
+
+```
+
+
+
+
+# Step 4: DESeq2 Setup
 ```{r}
 # since I want to look at tissue specific DE, I need to separate them
 # placenta samples
@@ -310,7 +442,7 @@ head(results_placenta)
 head(results_cord)
 ```
 
-# Step 4: Differential Expression Results
+# Step 5: Differential Expression Results
 ```{r}
 head(results_placenta, 20)
 head(results_cord, 20)
