@@ -17,6 +17,7 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 ```{r}
 # upload libraries
 library(tidyverse)
+library(wordcloud2)
 library(data.table)
 library(HGNChelper)
 library(biomaRt) 
@@ -30,16 +31,19 @@ library(EnhancedVolcano)
 library(clusterProfiler)
 library(RColorBrewer)
 library(org.Hs.eg.db)
+library(ggVennDiagram)
 ```
 
 # Step 1: Get Counts
 ## Get raw data and process
+## Gestational Diabetes Mellitus (GDM) data was obtained in the following website: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE203346
 ```{r}
 # on imac
 get_raw_data <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW"
 get_files <- list.files(get_raw_data, pattern = "\\.tsv\\.gz$", full.names = TRUE)
 
 ```
+
 
 ```{r}
 #check
@@ -862,6 +866,179 @@ https://geneplexus.net/
 - 86/92 genes are in BioGRID for the GDM gene set
 - 50/50 genes are in BioGRID for the PPH gene set
 - geneset context combined
+```{r}
+#read in geneplexus results
+pph_neutral <- read_csv("../results/pph_geneplexus_results/GenePlexus_PPH-Curated-Genes_neutrals.csv")
+pph_similar_dis <- read_csv("../results/pph_geneplexus_results/GenePlexus_PPH-Curated-Genes_similarities.csv")
+pph_pred_genes <- read_csv("../results/pph_geneplexus_results/GenePlexus_PPH-Curated-Genes_predictions.csv")
+
+
+gdm_neutrals <- read_csv("../results/gdm_genplexus_results/GenePlexus_GDM-Placental-Genes_neutrals.csv")
+gdm_similar_dis <- read_csv("../results/gdm_genplexus_results/GenePlexus_GDM-Placental-Genes_similarities.csv")
+gdm_pred_genes <- read_csv("../results/gdm_genplexus_results/GenePlexus_GDM-Placental-Genes_predictions.csv")
+```
+
+
+```{r}
+
+pph_gene_results <- nrow(pph_pred_genes)
+gdm_gene_results <- nrow(gdm_pred_genes)
+
+pph_gene_results
+gdm_gene_results
+```
+
+
+```{r}
+# compare and contrast geneplexus results to see if there are similarities
+# look at all of the data
+full_gene_overlap <- intersect(pph_pred_genes$Symbol, gdm_pred_genes$Symbol)
+length(full_gene_overlap)
+
+full_simil_overlap <- intersect(pph_similar_dis$Name, gdm_similar_dis$Name)
+length(full_simil_overlap)
+
+full_neutral_overlap <- intersect(pph_neutral$Name, gdm_neutrals$Name)
+length(full_neutral_overlap)
+
+```
+
+
+```{r}
+# since the data is so huge I need to subset it. Experimented with different cutoffs and decided on 5% for predicted genes, 5% for similarity results, and all of the neutrals since the data set was already small dataset
+cut_pph <- quantile(pph_pred_genes$Probability, 0.95)
+cut_gdm <- quantile(gdm_pred_genes$Probability, 0.95)
+
+pph_top <- pph_pred_genes %>% filter(Probability >= cut_pph)
+gdm_top <- gdm_pred_genes %>% filter(Probability >= cut_gdm)
+
+overlap_top_genes <- intersect(pph_top$Symbol, gdm_top$Symbol)
+length(overlap_top_genes)
+head(overlap_top_genes)
+```
+
+```{r}
+cut_pph_sim <- quantile(pph_similar_dis$Similarity, 0.95)
+cut_gdm_sim<- quantile(gdm_similar_dis$Similarity, 0.95)
+
+pph_top_sim <- pph_similar_dis %>% filter(Similarity >= cut_pph_sim)
+gdm_top_sim <- gdm_similar_dis %>% filter(Similarity >= cut_gdm_sim)
+
+overlap_top_sim_dis <- intersect(pph_top_sim$Name, gdm_top_sim$Name)
+length(overlap_top_sim_dis)
+head(overlap_top_sim_dis)
+```
+
+## Venn diagrams of the overlaps
+```{r}
+# plot the results using vendiagrams
+
+pph_genes_5 <- pph_top$Symbol
+gdm_genes_5 <- gdm_top$Symbol
+
+gene_list <- list(
+  PPH = pph_genes_5,
+  GDM = gdm_genes_5
+)
+
+ggVennDiagram(gene_list, label_color = "white", label_alpha = 5, label_size = 6) +
+  scale_fill_gradient(low = "white", high = "#CC79A7") +
+  ggtitle("Top 5% GenePlexus Predicted Genes") + 
+  scale_x_continuous(expand = expansion(mult = .2))
+  
+
+```
+
+
+```{r}
+pph_sim_5 <- pph_top_sim$Name
+gdm_sim_5 <- gdm_top_sim$Name
+
+sim_list <- list(
+  PPH = pph_sim_5,
+  GDM = gdm_sim_5
+)
+
+ggVennDiagram(sim_list, label_color = "white", label_alpha = 5, label_size = 6) +
+  scale_fill_gradient(low = "white", high = "purple") +
+  ggtitle("Top 5% Similar Diseases/Phenotypes") + 
+  scale_x_continuous(expand = expansion(mult = .2))
+
+  
+
+
+```
+
+
+```{r}
+pph_go_terms <- pph_neutral$Name
+gdm_go_terms <- gdm_neutrals$Name
+
+go_list <- list(
+  PPH = pph_go_terms,
+  GDM = gdm_go_terms
+)
+
+ggVennDiagram(go_list, label_color = "white", label_alpha = 5, label_size = 6) +
+  scale_fill_gradient(low = "white", high = "blue") +
+  ggtitle("GO Terms of GenePlexus Disease Modules") + 
+  scale_x_continuous(expand = expansion(mult = .2))
+
+
+```
+
+
+## Word cloud of the overlapping genes
+```{r}
+# create function to create word cloud plots
+
+
+make_task_wordcloud <- function(data, task, outfile, n ) {
+  
+  # filter by task and prepare data
+  wc_df <- data %>%
+    filter(Task == task) %>%
+    group_by(Name) %>%
+    summarise(freq = sum(Similarity), .groups = "drop") %>%
+    mutate(word = stringr::str_trunc(Name, 40)) %>%
+    select(word, freq) %>%
+    arrange(desc(freq)) %>%
+    slice(1:n)
+  
+  # make word cloud
+  wc_widget <- wordcloud2(
+    wc_df,
+    size = .1,
+    gridSize =2,                     
+    minRotation = 0,                       
+    maxRotation = 0,
+    rotateRatio = 0,    
+    backgroundColor = "white"
+  )
+  
+  # save word cloud as html
+  html_file <- tempfile(fileext = ".html")
+  htmlwidgets::saveWidget(wc_widget, file = html_file, selfcontained = TRUE)
+  
+  # convert HTML to PDF
+  webshot::webshot(url = html_file, file = outfile, delay =5, vwidth = 480, vheight=480)
+  
+
+}
+
+
+
+```
+
+
+```{r}
+# get word cloud for the similar diseases, phenotypes and biological processes of the overlap
+make_task_wordcloud(pph_top_sim,"Biological Process", "../results/overlap_similar_bioprocess.pdf",20)
+make_task_wordcloud(pph_top_sim,"Phenotype", "../results/overlap_similar_pheno.pdf",20)
+make_task_wordcloud(pph_top_sim,"Disease", "../results/overlap_similar_disease.pdf",20)
+```
+
+
 
 
 
