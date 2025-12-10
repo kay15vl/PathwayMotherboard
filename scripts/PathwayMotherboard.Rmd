@@ -843,22 +843,25 @@ length(pph_gdm_overlap)
 ```{r}
 # create gene lists to run on Pygeneplexus
 write.table(pph_entrez_final,
-            file = "../data/PPH_genes_for_pygeneplexus.txt",
+            file = "../results/PPH_genes_for_pygeneplexus.txt",
             quote = FALSE, row.names = FALSE, col.names = FALSE)
 
 
 write.table(pl_entrez,
-            file = "../data/GDM_placenta_genes_for_pygeneplexus.txt",
+            file = "../results/GDM_placenta_genes_for_pygeneplexus.txt",
             quote = FALSE, row.names = FALSE, col.names = FALSE)
 
 ```
 
 
 
-# Step 7: Run PyGenePlexus
-```{r}
-
-```
+# Step 7: Run PyGenePlexus on web app
+https://geneplexus.net/
+- Did new analysis and did an analysis for each gene set (pph genes and GDM placental genes)
+- Used BioGRID for network due to it being more rigoursly validataed interactions 
+- 86/92 genes are in BioGRID for the GDM gene set
+- 50/50 genes are in BioGRID for the PPH gene set
+- geneset context combined
 
 
 
