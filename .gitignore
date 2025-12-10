@@ -1,12 +1,12 @@
 # Ignore data
-data/*
-*.tar
-*.gz
-*.zip
-*.fastq
-*.txt
-*.tsv
 
+data/zip/
+data/*.tar
+data/*.gz
+data/*.zip
+data/GSE203346_RAW
+data/GSE203346_Normalized_log2TPM_matrix.txt
+data/*.tsv
 
 # Ignore RStudio junk
 .Rhistory

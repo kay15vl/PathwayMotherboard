@@ -18,7 +18,8 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 # upload libraries
 library(tidyverse)
 library(data.table)
-library(biomaRt)
+library(HGNChelper)
+library(biomaRt) 
 library(GEOquery)
 library(RUVSeq) # may use depending on variation
 library(DESeq2)
@@ -282,6 +283,7 @@ cond_colors <- ifelse(cond == "GDM", "gold", "steelblue")
 
 reorder_edaobj
 ```
+## Boxplots for raw gene counts
 
 ```{r}
 # set margins
@@ -304,7 +306,7 @@ legend("topright",
        bty = "n")
 ```
 
-
+## Boxplots for raw gene counts split up by sample
 ```{r}
 #plot by tissue
 tissue <- pData(reorder_edaobj)$tissue
@@ -344,6 +346,7 @@ EDASeq::boxplot(log10(counts(reorder_edaobj[, idx_cord]) + 1),
 
 ```
 
+## Mean Variance Plot
 
 ```{r}
 # plot Mean Variance plot
@@ -371,7 +374,200 @@ length_gc <- readRDS("../data/length_gc_human_data.rds")
 fData(eda_obj)$length <- length_gc[, "length"]
 fData(eda_obj)$gc <- length_gc[, "gc"]
 
+# check gc and length mappings
+cat("For GC mapping.")
+str(fData(eda_obj)$gc)
+summary(fData(eda_obj)$gc)
+table(is.na(fData(eda_obj)$gc))
+
+cat("For length mapping.")
+str(fData(eda_obj)$length)
+summary(fData(eda_obj)$length)
+table(is.na(fData(eda_obj)$length))
+
+# we have some NAs so we have to get rid of these before plotting
+nagc_edj_obj <- !is.na(fData(eda_obj)$gc)
+final_edj_obj <- eda_obj[nagc_edj_obj, ]
+
+naleng_edj_obj <- !is.na(fData(eda_obj)$length)
+final_edj_obj <- eda_obj[naleng_edj_obj, ]
+
+# set up colors for condition
+cond <- factor(pData(final_edj_obj)$condition, levels = c("Control", "GDM"))
+base_colors <- c("blue", "red")
+colors_cond<- base_colors[cond]
 ```
+
+## Bias plots
+
+```{r}
+# plot biasPlots
+#par(mar= c(5,5,3,6), xpd = FALSE)
+biasPlot(final_edj_obj, 
+         "gc", 
+         ylog=TRUE, 
+         ylim = c(0,12),
+         xlim = c(0.18,0.9),
+         col= colors_cond,
+         main = "GC content bias before normalization",
+         xlab = "GC Content",
+         ylab = "Log Gene Counts")
+
+legend("topleft", 
+       #inset = c(-0.3, 0.1),
+       legend = c("Control", "GDM"),
+       fill = base_colors,
+       bty = "n")
+
+```
+
+```{r}
+# need to fix the scale for length due to gene lengths varying. 
+# look at window where 99% of the gene lengths lie
+length_scale <- quantile(fData(final_edj_obj)$length, probs = c(0.01,0.99), na.rm=TRUE)
+
+#plot
+biasPlot(final_edj_obj, 
+         "length", 
+         ylog=TRUE,
+         # ylim = c(0,12),
+         xlim = c(length_scale[1], length_scale[2]),
+         col= colors_cond,
+         main = "Length bias before normalization",
+         xlab = "Gene Length (bp)",
+         ylab = "Log Gene Counts")
+
+legend("topleft", 
+       legend = c("Control", "GDM"),
+       fill = base_colors,
+       bty = "n")
+```
+
+### There is length and gc content bias. Need to normalize.
+
+```{r}
+# do within lane normalizaiton to handle these two biases
+norm_eda_obj <- withinLaneNormalization(final_edj_obj,"gc", which= "full")
+norm_all_eda_obj <- withinLaneNormalization(norm_eda_obj, "length", which = "full")
+```
+
+
+```{r}
+# adjust scale because GC content range and gene counts can vary greatly due to human genes being very different sizes; they read extremes
+gc_range <- quantile(fData(final_edj_obj)$gc, c(0.01,0.99))
+#replot to see impact of normalization
+biasPlot(norm_all_eda_obj, 
+         "gc", 
+         ylog=TRUE, 
+         ylim = c(0,200),
+         xlim = gc_range,
+         col= colors_cond,
+         main = "GC content bias after normalization",
+         xlab = "GC Content",
+         ylab = "Log Gene Counts")
+
+legend("topleft", 
+       #inset = c(-0.3, 0.1),
+       legend = c("Control", "GDM"),
+       fill = base_colors,
+       bty = "n")
+```
+
+```{r}
+len_range <- quantile(fData(final_edj_obj)$length, c(0.01,0.99))
+#plot
+biasPlot(norm_all_eda_obj, 
+         "length", 
+         ylog=TRUE,
+         ylim = c(0,180),
+         xlim = len_range,
+         col= colors_cond,
+         main = "Length bias after normalization",
+         xlab = "Gene Length (bp)",
+         ylab = "Log Gene Counts")
+
+legend("topleft", 
+       legend = c("Control", "GDM"),
+       fill = base_colors,
+       bty = "n")
+```
+
+```{r}
+# plot Mean Variance plot
+# plot Mean Variance plot
+par(mfrow=c(1,2))
+meanVarPlot(eda_obj, log=TRUE, main ="Mean Variance Plot Before Normalization")
+meanVarPlot(norm_all_eda_obj, log=TRUE, main ="Mean Variance Plot After Normalization")
+```
+
+## Now to correct bias between lanes to correct for different library sizes and sequencing depths
+```{r}
+norm_btwln_eda_obj <- betweenLaneNormalization(
+  norm_all_eda_obj,
+  which = "median"
+)
+```
+
+
+```{r}
+
+# reorder based on condition
+cond <- factor(pData(final_edj_obj)$condition,
+               levels = c("Control", "GDM"))
+ord <- order(cond)         
+
+# reorder raw and normalized eda objects
+raw_eda_ord  <- final_edj_obj[, ord]
+norm_eda_ord <- norm_btwln_eda_obj[, ord]
+
+# colors for each sample in this new order
+cond_ord    <- cond[ord]
+cond_colors <- ifelse(cond_ord == "Control", "blue", "red")
+
+#par(mfrow = c(1, 2), mar = c(12,5,4,10), xpd = TRUE)
+
+# before normalization
+EDASeq::boxplot(
+  log10(counts(raw_eda_ord) + 1),
+  col       = cond_colors,
+  las       = 2,
+  cex.axis  = 0.9,
+  cex.names = 0.9,
+  main      = "Raw gene counts by sample before Normalization (log)",
+  ylab      = "log10(count + 1)",
+  xlab      = ""
+)
+mtext("Samples (Control → GDM)", side = 1, line = 9, cex = 0.9)
+legend("topright",
+       inset  = c(-0.3, 0.1),
+       legend = c("Control", "GDM"),
+       fill   = c("blue", "red"),
+       bty    = "n")
+
+# after normalization
+EDASeq::boxplot(
+  log10(counts(norm_eda_ord) + 1),
+  col       = cond_colors,  
+  las       = 2,
+  cex.axis  = 0.9,
+  cex.names = 0.9,
+  main      = "Gene counts after normalization (log)",
+  ylab      = "log10(count + 1)",
+  xlab      = ""
+)
+mtext("Samples (Control → GDM)", side = 1, line = 9, cex = 0.9)
+legend("topright",
+       inset  = c(-0.3, 0.1),
+       legend = c("Control", "GDM"),
+       fill   = c("blue", "red"),
+       bty    = "n")
+
+par(mfrow = c(1,1), xpd = FALSE)
+
+```
+
+
+
 
 
 
@@ -426,8 +622,25 @@ dds_cord <- dds_cord[keep_cord, ]
 dds_placenta <- DESeq(dds_placenta)
 dds_cord <- DESeq(dds_cord)
 
+# do dispersion plots to confirm that DESeq2 is the best model to use for our type of data
+plotDispEsts(dds_placenta, main = "Dispersion estimates for Placental Samples (GDM vs Control)")
+plotDispEsts(dds_cord, main = "Dispersion estimates for Umbilical Cord \nBlood Samples (GDM vs Control)")
 ```
 
+
+```{r}
+# do variance-stabalizing transformation 
+vsd_placenta <- vst(dds_placenta, blind = FALSE)
+vsd_cord <- vst(dds_cord, blind = FALSE)
+
+# pca plots
+plotPCA (vsd_placenta, intgroup = "condition") +
+  ggtitle("Placenta PCA: GDM vs Control")
+plotPCA (vsd_cord, intgroup = "condition") +
+  ggtitle("Umbilical Cord Blood PCA: GDM vs Control")
+```
+
+### PCA plots show that condition accounts for some of the variance observed in gene expression, particularly in the placenta samples. In contrast, very little condition-related variation is evident in the cord blood samples. Although the placenta samples do not form completely distinct clusters, there is a some separation between GDM and control along PC1. This is expected because many other biological and technical covariates contribute to the remaining variance. The slight but noticeable separation suggests that there are detectable transcriptomic differences between conditions in the placenta
 
 ```{r}
 # separate results by condition for each tissue
@@ -484,17 +697,168 @@ EnhancedVolcano(
 )
 ```
 
+
+
+#Step 6: GDM and PPH Gene overlaps
 ```{r}
-# PCA plots
-plotPCA(vst(dds_placenta), intgroup = "condition")
+# get pph related genes. 
+# starting with the proteins to map the genes 
+pph_prot <- read_lines("../data/pph_proteinlist.txt")
+
+# get rid of empty lines and duplicates
+pph_prot <- unique(pph_prot[pph_prot != ""])
+
+head(pph_prot)
+length(pph_prot)
+```
+
+
+```{r}
+# clean protein names
+prot_clean <- str_trim(pph_prot)
+prot_clean <- str_to_upper(prot_clean)
+
+# get protein to mapping info
+get_gene_info <- checkGeneSymbols(prot_clean, species = "human")
+protein_to_gene <- get_gene_info$Suggested.Symbol
+
+# keep only unique genes and leave out nas
+protein_to_gene <- unique(protein_to_gene[!is.na(protein_to_gene)])
+
+# there are some results that had multiple mappings, split these into their own row
+protein_split <- str_split(protein_to_gene, pattern = "///")
+protein_split <- lapply(protein_split, str_trim)
+
+# convert into a vector and get rid of NA results
+protein_to_gene <- unique(unlist(protein_split))
+protein_to_gene <- protein_to_gene[protein_to_gene !=""]
+
+protein_to_gene
+
+```
+
+```{r}
+# get gene list
+pph_genes <- read_lines("../data/pph_genelist.txt")
+
+#  clean list
+pph_genes <- str_trim(pph_genes[pph_genes!=""])
+
+# combine 
+pph_gene_symbols <- c(protein_to_gene, pph_genes)
+
+# ensure format of gene symbols is the same for all genes in list
+pph_gene_symbols <- str_to_upper(str_trim(pph_gene_symbols))
+
+# get rid of duplicates
+pph_gene_symbols <- unique(pph_gene_symbols)
+
+pph_gene_symbols
+length(pph_gene_symbols)
+```
+
+
+```{r}
+# map ensembl to gene symbols since DE analysis of placenta is in ensembl
+pph_map_ensembl <- bitr(
+  pph_gene_symbols,
+  fromType ="SYMBOL",
+  toType = c("ENSEMBL", "ENTREZID"),
+  OrgDb = org.Hs.eg.db
+)
+
+head(pph_map_ensembl)
+nrow(pph_map_ensembl)
+```
+
+
+```{r}
+#get rid of NAs
+pph_map_ensembl <- pph_map_ensembl[!is.na(pph_map_ensembl$ENTREZID) & !is.na(pph_map_ensembl$SYMBOL), ]
+
+# get rid of redundant genes
+pph_symbols_final <- unique(pph_map_ensembl$SYMBOL)
+pph_ensembl_final <- unique(pph_map_ensembl$ENSEMBL)
+pph_entrez_final  <- unique(pph_map_ensembl$ENTREZID)
+
+length(pph_symbols_final)
+length(pph_entrez_final)
+```
+
+
+```{r}
+# get de results for the placenta samples
+res_pl <- as.data.frame(results_placenta)
+
+# keep only rows padj < 0.05 and leave any na out
+res_pl_sig <- subset(res_pl, !is.na(padj) & padj < 0.05)
+
+nrow(res_pl_sig)
+head(res_pl_sig)
+
+# add gene ids
+res_pl_sig$gene_id <- rownames(res_pl_sig)
+head(res_pl_sig)
+
+# add entrez id and symbols
+pl_map_genes <- bitr(
+  res_pl_sig$gene_id,
+  fromType = "ENSEMBL", 
+  toType = c("SYMBOL", "ENTREZID"),
+  OrgDb = org.Hs.eg.db
+)
+
+# drop the NAs
+pl_map_genes <- pl_map_genes[!is.na(pl_map_genes$SYMBOL) & !is.na(pl_map_genes$ENTREZID), ]
+
+# take out redundant mappings
+pl_symbols <- unique(pl_map_genes$SYMBOL)
+pl_entrez <- unique(pl_map_genes$ENTREZID)
+```
+
+
+## Take a look at what genes overlap between the Placental GDM genes and the PPH genes
+```{r}
+# how many genes are shared between pph and gdm
+pph_gdm_overlap <- intersect(pph_entrez_final, pl_entrez)
+
+# whats seen only in pph
+pph_only <- setdiff(pph_entrez_final, pl_entrez)
+
+# whats seen only in GDM
+gdm_only_pl <- setdiff(pl_entrez, pph_entrez_final)
+
+# all of the pph genes
+length(pph_entrez_final)   
+
+# DE GDM genes in placenta tissues
+length(pl_entrez)      
+
+# total shared between GDM and pph
+length(pph_gdm_overlap)     
+
+```
+### No gene overlaps :(
+
+```{r}
+# create gene lists to run on Pygeneplexus
+write.table(pph_entrez_final,
+            file = "../data/PPH_genes_for_pygeneplexus.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+
+write.table(pl_entrez,
+            file = "../data/GDM_placenta_genes_for_pygeneplexus.txt",
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
 ```
 
 
 
+# Step 7: Run PyGenePlexus
+```{r}
 
-
-
-
+```
 
 
 
