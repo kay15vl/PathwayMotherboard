@@ -38,7 +38,9 @@ library(ggVennDiagram)
 ## Gestational Diabetes Mellitus (GDM) data was obtained in the following website: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE203346
 ```{r}
 # on imac
-get_raw_data <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW"
+#get_raw_data <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW"
+# on macbookpro
+get_raw_data <- "/Users/karlavela/Google Drive/Other computers/My iMac/PathwayMotherboard/data/GSE203346_RAW/"
 get_files <- list.files(get_raw_data, pattern = "\\.tsv\\.gz$", full.names = TRUE)
 
 ```
@@ -83,7 +85,10 @@ head(map_to_genes)
 
 ```{r}
 # take a look at one of the tsv.gz files
-check_file <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW/GSM6167352_17A020341F_S30_L004.tsv.gz"
+#check_file <- "/Users/karlavelalopez/Desktop/PathwayMotherboard/data/GSE203346_RAW/GSM6167352_17A020341F_S30_L004.tsv.gz"
+
+# macbook
+check_file <- "/Users/karlavela/Google Drive/Other computers/My iMac/PathwayMotherboard/data/GSE203346_RAW/GSM6167347_17A020338_S8_L004.tsv.gz"
 check<- read_tsv(gzfile(check_file), n_max =20)
 head(check)
 ```
